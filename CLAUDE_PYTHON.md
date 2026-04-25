@@ -78,7 +78,37 @@
         <description>Use `ClassVar` for class-level state. Use `Final` for constants that must not be reassigned.</description>
       </rule>
       <rule id="any_acceptable">
-        <description>`Any` is acceptable for genuinely dynamic data (serialization, JSON, reflection). Don't build over-complex generics to avoid it.</description>
+        <description>`Any` is acceptable inside implementations for genuinely dynamic data (serialization, JSON, reflection). Don't build over-complex generics to avoid it.</description>
+      </rule>
+      <rule id="any_at_boundaries">
+        <description>`Any` must not appear in public function signatures (parameters or return types). If data is genuinely dynamic, accept it as `Any` at the boundary, narrow it inside (via `TypedDict`, `cast`, `TypeIs`, or runtime checks), and return a precise type.</description>
+        <example type="correct">
+          ```python
+          def parse_event(payload: Any) -> Event:
+            assert isinstance(payload, dict)
+            return Event(id=payload['id'], kind=payload['kind'])
+          ```
+        </example>
+        <example type="incorrect">
+          ```python
+          def parse_event(payload: Any) -> Any: ...
+          ```
+        </example>
+      </rule>
+      <rule id="abc_in_parameters">
+        <description>Use `collections.abc` types for parameters when the function only reads the collection. Reserve concrete types (`list`, `dict`, `set`) for return values and when mutation is required.</description>
+        <example type="correct">
+          ```python
+          def total(items: Sequence[int]) -> int: ...
+          def lookup(by_id: Mapping[str, User]) -> User | None: ...
+          ```
+        </example>
+        <example type="incorrect">
+          ```python
+          def total(items: list[int]) -> int: ...
+          def lookup(by_id: dict[str, User]) -> User | None: ...
+          ```
+        </example>
       </rule>
       <rule id="literal_for_restricted_values">
         <description>Use `Literal` for restricted values instead of bare `str` or `int`.</description>
@@ -273,7 +303,91 @@
       </example>
     </rule>
     <rule>When both sync and async variants exist, the async variant is the primary API.</rule>
+    <rule id="task_group_over_gather">
+      <description>Prefer `asyncio.TaskGroup` over `asyncio.gather` for structured concurrency. `TaskGroup` cancels siblings on first failure and raises an `ExceptionGroup`; `gather` requires manual cancellation handling.</description>
+      <example type="correct">
+        ```python
+        async with asyncio.TaskGroup() as tg:
+          a = tg.create_task(fetch_user(uid))
+          b = tg.create_task(fetch_orders(uid))
+        return Result(a.result(), b.result())
+        ```
+      </example>
+      <example type="incorrect">
+        ```python
+        a, b = await asyncio.gather(fetch_user(uid), fetch_orders(uid))
+        ```
+      </example>
+    </rule>
+    <rule id="asyncio_timeout">
+      <description>Use `asyncio.timeout()` (3.11+) instead of `asyncio.wait_for()`. `timeout()` is a context manager that integrates cleanly with `TaskGroup` and cancellation.</description>
+      <example type="correct">
+        ```python
+        async with asyncio.timeout(5):
+          result = await slow_call()
+        ```
+      </example>
+      <example type="incorrect">
+        ```python
+        result = await asyncio.wait_for(slow_call(), timeout=5)
+        ```
+      </example>
+    </rule>
+    <rule id="cancellation_handling">
+      <description>Never swallow `asyncio.CancelledError`. Catch it only to run cleanup, then re-raise. A bare `except:` or `except Exception:` must not absorb cancellation.</description>
+      <example type="correct">
+        ```python
+        try:
+          await work()
+        except asyncio.CancelledError:
+          await cleanup()
+          raise
+        except Exception:
+          logger.exception('work failed')
+        ```
+      </example>
+    </rule>
+    <rule id="no_blocking_in_async">
+      <description>Don't call blocking code (file I/O, `requests`, `time.sleep`, CPU-heavy work) directly in async functions. Use `asyncio.to_thread()` for blocking calls; offload CPU work to a process pool.</description>
+      <example type="correct">
+        ```python
+        data = await asyncio.to_thread(some_blocking_io, path)
+        ```
+      </example>
+    </rule>
   </async_patterns>
+  <logging>
+    <rule id="module_logger">
+      <description>Use a module-level logger: `logger = logging.getLogger(__name__)`. Never use `print` in library or application code.</description>
+      <example type="correct">
+        ```python
+        import logging
+        logger = logging.getLogger(__name__)
+
+        logger.info('user signed in', extra={'user_id': user.id})
+        ```
+      </example>
+    </rule>
+    <rule id="structured_fields">
+      <description>Pass variable data as structured fields via `extra=`, not interpolated into the message string. Keep the message a stable, low-cardinality template so logs aggregate cleanly.</description>
+      <example type="correct">
+        ```python
+        logger.info('payment processed', extra={'order_id': order.id, 'amount': amount})
+        ```
+      </example>
+      <example type="incorrect">
+        ```python
+        logger.info(f'payment processed for order {order.id} amount {amount}')
+        ```
+      </example>
+    </rule>
+    <rule id="exception_logging">
+      <description>Use `logger.exception()` inside `except` blocks to capture the traceback. Don't `logger.error(str(e))` — it loses the stack.</description>
+    </rule>
+    <rule id="log_levels">
+      <description>Reserve `error` for problems that need attention, `warning` for recoverable anomalies, `info` for normal events, `debug` for development detail. Don't log expected control flow at `info` or above.</description>
+    </rule>
+  </logging>
   <testing>
     <conventions>
       <rule id="test_structure">
