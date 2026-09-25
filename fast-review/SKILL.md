@@ -1,6 +1,6 @@
 ---
 name: fast-review
-description: Code review of the current diff (or a PR/branch/path target) at max-effort recall for a fraction of the tokens — one shared diff bundle, 3 parallel finders, inline verify, no verifier fleet. Covers correctness bugs, /simplify-style cleanup (reuse, simplification, efficiency, altitude), and — when the PR closes a Linear ticket — whether the diff actually delivers what the ticket asked for. Use instead of /code-review when the review should be thorough but cheap. Pass --comment to post findings as one PR review — short plain-English inline comments prefixed blocker:/nit:, with suggested changes where the fix is known, no summary, Request Changes only when there is a blocker. Pass --fix to apply the cleanups.
+description: Code review of the current diff (or a PR/branch/path target) at max-effort recall for a fraction of the tokens — one shared diff bundle, 3 parallel finders, inline verify, no verifier fleet. Covers correctness bugs, /simplify-style cleanup (whether the change needs to exist at all, reuse, simplification, efficiency, altitude), and — when the PR closes a Linear ticket — whether the diff actually delivers what the ticket asked for. Use instead of /code-review when the review should be thorough but cheap. Pass --comment to post findings as one PR review — short plain-English inline comments prefixed blocker:/nit:, with suggested changes where the fix is known, no summary, Request Changes only when there is a blocker. Pass --fix to apply the cleanups.
 argument-hint: "[--comment] [--fix] [<pr#>|<branch>|<path>]"
 ---
 
@@ -108,9 +108,25 @@ Then one angle cluster each:
 **Finder 3 — `clean`** (cleanup, cap 20 — the `/simplify` pass)
 > You are improving the quality of the changed code, not hunting for bugs. Do
 > not report correctness defects; other finders cover those. Review the changed
-> code through **each** of the five lenses below. Cover whichever apply — you do
+> code through **each** of the six lenses below. Cover whichever apply — you do
 > not need findings from every lens; prioritize the highest-cost issues across
 > all of them.
+>
+> **Necessity** — the change, or a piece of it, should not exist at all. Ask
+> this lens first, because the cheapest fix for the other five is deleting the
+> code they would improve. Is there an existing solution that makes the new code
+> redundant — a dependency already in the manifest, a stdlib or platform
+> feature, a config option, a code path that already does this job? Does the
+> diff add a seam for a case that does not exist yet: an abstraction with one
+> implementation, a factory for one product, a parameter every caller passes the
+> same value for, a hook or plugin layer with one user? Name what to delete and
+> what covers it instead. When the whole change is unnecessary, file it once on
+> the entry point, not on ten lines.
+>
+> Do not flag: anything the ticket or PR description asks for; validation at a
+> trust boundary, error handling, accessibility, or a test; scaffolding this diff
+> already consumes. The bar is a named replacement or an unused seam — "I would
+> not have built this" is not a finding.
 >
 > **Reuse** — new code that re-implements something the codebase already has.
 > Grep shared/utility modules and files adjacent to the change, and name the
@@ -202,7 +218,8 @@ Two **separate** caps: at most 10 correctness findings and at most 5 cleanup
 findings. They do not compete — a bug-heavy diff does not swallow the cleanup
 budget, and a clean diff does not get its cleanup list padded to the cap.
 Correctness first, CONFIRMED before PLAUSIBLE; cleanup after, highest-value
-first.
+first — a necessity finding leads the cleanup list, since deleting code beats
+improving it, and it must not be crowded out of the cap by five smaller nits.
 
 ### The nit value bar
 
@@ -216,6 +233,9 @@ one of these is true, and let that be the consequence clause in the comment:
   onto shared infrastructure.
 - **Simplification** — the same behavior with materially less code: a helper
   that already exists, a dead branch, twenty lines that are five.
+- **Necessity** — the code does not need to exist: something already shipped
+  does the job, or the seam it adds has one caller and no second case in sight.
+  The fix is deleting it, and you can name what covers it instead.
 
 Drop everything else — naming, ordering, formatting, equivalent idioms,
 one-line restructures, "consider extracting", anything whose only argument is
@@ -326,8 +346,8 @@ Without `--comment`: print one line per finding, `file:line — blocker/nit: tex
 If the `ReportFindings` tool is available, call it once with
 `{level: "high", findings}` instead — each entry with `file`, `line`, `summary`,
 `short_summary` (≤60 chars, the claim alone), `failure_scenario`, `category`
-(`correctness`, `reuse`, `simplification`, `efficiency`, `altitude`,
-`conventions`), and `verdict` for correctness entries — and do not also print
+(`correctness`, `necessity`, `reuse`, `simplification`, `efficiency`,
+`altitude`, `conventions`), and `verdict` for correctness entries — and do not also print
 them as text.
 
 ### Posting to a PR (`--comment`)
@@ -406,5 +426,8 @@ Finally: `rm -f "$BUNDLE"`.
   Finder 3's Grep.
 - **Verdicts are not severities.** CONFIRMED/PLAUSIBLE is confidence;
   blocker/nit is "must act before merge". Consequence decides, not verdict.
+- **No separate necessity finder.** It is a lens on Finder 3, sharing the cap
+  20 — the angle needs the same diff and the same "what already exists" Grep as
+  Reuse, so a fourth agent would buy nothing.
 - **One cleanup finder, not four.** Same diff, same finding shape — merging
   saves 3 agents. Only safe because the cap is summed (20, not 8).
